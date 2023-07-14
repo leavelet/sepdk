@@ -1,0 +1,406 @@
+#!/bin/sh
+
+# File: insmod-socwatch
+# Description: script to load SoCWatch driver
+# Version: 1.0
+#
+# **********************************************************************************
+#  This file is provided under a dual BSD/GPLv2 license.  When using or
+#  redistributing this file, you may do so under either license.
+
+#  GPL LICENSE SUMMARY
+
+#  Copyright(c) 2020 Intel Corporation.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of version 2 of the GNU General Public License as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful, but
+#  WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#  General Public License for more details.
+
+#  Contact Information:
+#  SoC Watch Developer Team <socwatchdevelopers@intel.com>
+#  Intel Corporation,
+#  1300 S Mopac Expwy,
+#  Austin, TX 78746
+
+#  BSD LICENSE
+
+#  Copyright(c) 2020 Intel Corporation.
+
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions
+#  are met:
+
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in
+#      the documentation and/or other materials provided with the
+#      distribution.
+#    * Neither the name of Intel Corporation nor the names of its
+#      contributors may be used to endorse or promote products derived
+#      from this software without specific prior written permission.
+
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+#  OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+#  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+#  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+#  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+#  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+#  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# **********************************************************************************
+
+
+# ------------------------------ CONSTANTS -----------------------------------
+
+# basic name of driver
+# The tag 'socwatch2_13' gets replaced by the actual module name by
+# the driver build script
+SOCWATCH_DRIVER_NAME=socwatch
+SOCWATCH_CHAR_DEV_NAME=apwr_driver_char_dev
+# name of rmmod script
+RMMOD_SCRIPT=rmmod-socwatch
+# default driver device group
+DEFAULT_GROUP=vtune
+# backup group in case group creation fails
+BACKUP_GROUP=root
+# default driver device permissions
+DEFAULT_PERMS=660
+
+# ------------------------------- OUTPUT -------------------------------------
+
+print_msg()
+{
+  MSG="$*"
+  echo "$MSG"
+}
+
+print_nnl()
+{
+  MSG="$*"
+  echo -n "$MSG"
+}
+
+print_err()
+{
+  MSG="$*"
+  if [ -w /dev/stderr ] ; then
+    echo "$MSG" >> /dev/stderr
+  else
+    echo "$MSG"
+  fi
+}
+
+# set the path to include "standard" locations so commands below can be found
+PATH="/sbin:/usr/sbin:/usr/local/sbin:/bin:/usr/bin/:/usr/local/sbin:/usr/local/bin:/usr/local/gnu/bin:"${PATH}""
+export PATH
+
+# ------------------------------ COMMANDS ------------------------------------
+
+CHGRP="chgrp"
+CHMOD="chmod"
+CUT="cut"
+DIRNAME="dirname"
+GREP="grep"
+LS="ls"
+LSMOD="lsmod"
+INSMOD="insmod"
+STAT="stat"
+SU="su"
+WHICH="which"
+GROUPMOD="groupmod"
+
+COMMANDS_TO_CHECK="${CUT} ${DIRNAME} ${GREP} ${INSMOD} ${LSMOD} ${MKDIR} ${WHICH} ${CAT} ${GROUPMOD}"
+
+# ------------------------------ FUNCTIONS -----------------------------------
+
+# function to show usage and exit
+print_usage_and_exit()
+{
+  err=${1:-0}
+  print_msg ""
+  print_msg "Usage: $0 [ options ]"
+  print_msg ""
+  print_msg " where \"options\" are the following:"
+  print_msg ""
+  print_msg "    -g | --group group"
+  print_msg "      restricts access to the ${SOCWATCH_DRIVER_NAME} driver to users in the specified"
+  print_msg "      group; if this option is not provided, the group \"${DEFAULT_GROUP}\""
+  print_msg "      will be used"
+  print_msg ""
+  print_msg "    -p | --perms fileperms"
+  print_msg "      restricts access to the ${SOCWATCH_DRIVER_NAME} driver based on the specified"
+  print_msg "      file permissions; if this option is not provided, then file"
+  print_msg "      permissions \"${DEFAULT_PERMS}\" (or equivalently, \"ug+rw\") will be used"
+  print_msg "      Please provide the permission in octal format, e.g. ${DEFAULT_PERMS}"
+  print_msg ""
+  print_msg "    -q | --query"
+  print_msg "      returns 0 if driver is already loaded, non-zero otherwise;"
+  print_msg "      if driver is loaded, information on group ownership"
+  print_msg "      and file permissions on driver device will be displayed"
+  print_msg ""
+  print_msg "    -r | --reload"
+  print_msg "      attempt to reload the driver; note that the driver will"
+  print_msg "      not unload if it is still in use"
+  print_msg ""
+  exit $err
+}
+
+# set the directory of the insmod-socwatch script
+SCRIPT_DIR=`dirname $0`
+SEP_SHELL=
+SEP_FORCE=-f
+
+# check for certain options
+reload_driver=0
+user_def_perm=0
+while [ $# -gt 0 ] ; do
+  case "$1" in
+    -h | --help)
+      print_usage_and_exit 0
+      ;;
+    -g | --group)
+      DRIVER_GROUP=$2
+      if [ -z "$DRIVER_GROUP" ] ; then
+        print_err ""
+        print_err "ERROR: must provide a correct group name or id"
+        print_usage_and_exit 254
+      fi
+      shift
+      ;;
+    -p | --perms)
+      DRIVER_PERMS=$2
+      if [ -z "$DRIVER_PERMS" ] ; then
+        print_err ""
+        print_err "ERROR: must provide the file permissions"
+        print_usage_and_exit 254
+      fi
+      shift
+      ;;
+    -q | --query)
+      err=0
+      driver_loaded=`${LSMOD} | ${GREP} ${SOCWATCH_DRIVER_NAME}`
+      if [ -z "$driver_loaded" ] ; then
+        err=214
+        print_msg ""
+        print_msg "${SOCWATCH_DRIVER_NAME} driver is not loaded."
+        print_msg ""
+      else
+        if [ -e /dev/${SOCWATCH_CHAR_DEV_NAME} ] ; then
+          drv_group=`${STAT} -c "%G" /dev/${SOCWATCH_CHAR_DEV_NAME}`
+          drv_perms=`${STAT} -c "%a" /dev/${SOCWATCH_CHAR_DEV_NAME}`
+          print_msg ""
+          print_msg "${SOCWATCH_DRIVER_NAME} driver is loaded and owned by group \"${drv_group}\" with file permissions \"${drv_perms}\"."
+          print_msg ""
+        else
+          err=214
+          print_msg ""
+          print_msg "${SOCWATCH_DRIVER_NAME} driver is not correctly loaded."
+          print_msg ""
+        fi
+      fi
+      exit $err
+      ;;
+    -r | --reload)
+      reload_driver=1
+      ;;
+    *)
+      print_err ""
+      print_err "ERROR: unrecognized option \"$1\""
+      print_usage_and_exit 254
+      ;;
+  esac
+  shift
+done
+
+# if any of the COMMANDS_TO_CHECK are not executable, then exit script
+OK="true"
+for c in ${COMMANDS_TO_CHECK} ; do
+  CMD=`${WHICH} $c 2>&1` ;
+  if [ -z "${CMD}" ] ; then
+    OK="false"
+    print_err "ERROR: unable to find command \"$c\" !"
+  fi
+done
+if [ ${OK} != "true" ] ; then
+  print_err "Please add the above commands to your PATH and re-run the script...exiting."
+  exit 255
+fi
+
+# ------------------------------ VARIABLES -----------------------------------
+
+SCRIPT=$0
+DRIVER_DIRECTORY=`${DIRNAME} ${SCRIPT}`/drivers
+# use existing driver group and device permissions as default if available
+if [ -e /dev/${DRIVER_NAME}/c ] && [ -z "${BUSYBOX_SHELL}" ] ; then
+  drv_group=`${STAT} -c "%G" /dev/${DRIVER_NAME}`
+  drv_perms=`${STAT} -c "%a" /dev/${DRIVER_NAME}/c`
+else
+  #default permissions will be used, if user have not provided it via cmd line
+  drv_perms=${DEFAULT_PERMS}
+  # check if default group is to be used
+  if [ -z "$DRIVER_GROUP" ] ; then
+    ${GROUPMOD} ${DEFAULT_GROUP} > /dev/null 2>&1
+    verifygroup_err=$?
+    # switch to backup group if default group doesn't exist
+    if [ ${verifygroup_err} -ne 0 ] ; then
+      print_msg ""
+      print_msg "Warning: '${DEFAULT_GROUP}' default group doesn't exist..."
+      drv_group=${BACKUP_GROUP}
+      print_msg "         proceeding with group '${drv_group}' instead ..."
+      print_msg ""
+    else
+      drv_group=${DEFAULT_GROUP}
+    fi
+  fi
+fi
+DRIVER_GROUP=${DRIVER_GROUP:-${drv_group}}
+DRIVER_PERMS=${DRIVER_PERMS:-${drv_perms}}
+
+# ------------------------------- MAIN ---------------------------------------
+
+# check if driver device exists, and if so, then exit
+is_loaded=`${GREP} ${SOCWATCH_CHAR_DEV_NAME} /proc/devices`
+if [ -n "${is_loaded}" ] ; then
+  if [ $reload_driver -ne 1 ] ; then
+    print_err ""
+    print_err "The ${DRIVER_NAME} driver is already loaded!  Use ${SCRIPT_DIR}/${RMMOD_SCRIPT} to remove it."
+    print_err ""
+    exit 236
+  fi
+fi
+
+# check if USER is root
+if [ "${USER}x" != "rootx" ] ; then
+  if [ ! -w /dev ] ; then
+    print_msg ""
+    print_msg "NOTE:  super-user or \"root\" privileges are required in order to continue."
+    print_msg ""
+    OPTIONS="-g ${DRIVER_GROUP} -p ${DRIVER_PERMS}"
+    if [ $reload_driver -eq 1 ] ; then
+      OPTIONS="$OPTIONS -r"
+    fi
+    exec ${SU} -c "/bin/sh ${SCRIPT} ${OPTIONS}"
+    print_msg ""
+    exit 0
+  fi
+fi
+
+# if requested, reload driver
+if [ $reload_driver -eq 1 ] ; then
+  ${SCRIPT_DIR}/${RMMOD_SCRIPT}
+  err=$?
+  if [ $err -ne 0 ] ; then
+    print_err ""
+    print_err "Error: failed to unload SoCWatch driver via '${RMMOD_SCRIPT}' script"
+    print_err ""
+    exit $err
+  fi
+fi
+
+# file name of driver to load
+SOCWATCH_DRIVER_FILENAME=`${LS} ${DRIVER_DIRECTORY} | ${GREP} socwatch | ${GREP} .ko`
+
+if [ ! -r ${DRIVER_DIRECTORY}/${SOCWATCH_DRIVER_FILENAME} ] ; then
+  print_err ""
+  print_err "Warning: SoCWatch driver"
+  print_err "was not found in directory \"${DRIVER_DIRECTORY}\" !"
+  print_err ""
+  print_err "This means you may need to build SoCWatch driver from the provided"
+  print_err "driver sources.  Please see the driver README for instructions."
+  print_err ""
+  exit 235
+fi
+
+# insmod command to execute
+INSMOD_CMD="${INSMOD} ${DRIVER_DIRECTORY}/${SOCWATCH_DRIVER_FILENAME}"
+
+# execute the command
+print_msg ""
+print_msg "Executing: ${INSMOD_CMD}"
+${INSMOD_CMD}
+INSMOD_RESULT=$?
+
+# this lets the system to handle the device file creation
+sleep 1
+
+# abort if unable to load the driver
+if [ ${INSMOD_RESULT} -ne 0 ] ; then
+  print_err ""
+  print_err "Error: ${SOCWATCH_DRIVER_NAME} driver failed to load!"
+  print_err ""
+  print_err "You may need to build ${SOCWATCH_DRIVER_NAME} driver for your kernel."
+  print_err "Please see the ${SOCWATCH_DRIVER_NAME} driver README for instructions."
+  print_err ""
+  exit 235
+fi
+
+# check if the driver has been loaded into the kernel
+is_loaded=`${GREP} ${SOCWATCH_CHAR_DEV_NAME} /proc/devices`
+if [ -z "${is_loaded}" ] ; then
+  print_err ""
+  print_err "Error: unable to find ${SOCWATCH_DRIVER_NAME} device in /proc/devices !"
+  print_err ""
+  exit 233
+fi
+
+# change group ownership to whichever group is permitted to open the driver
+if [ -z "${DRIVER_GROUP}" ] ; then
+  print_err ""
+  print_err "Error: No group ownership specified for ${SOCWATCH_DRIVER_NAME} device file...exiting."
+  print_err ""
+  exit 231
+fi
+
+print_msg ""
+print_nnl "Setting group ownership of device file to group \"${DRIVER_GROUP}\" ... "
+${CHGRP} ${DRIVER_GROUP} /dev/${SOCWATCH_CHAR_DEV_NAME}
+CHGRP_RESULT=$?
+if [ ${CHGRP_RESULT} -ne 0 ] ; then
+  print_err ""
+  print_err "Error: Driver loaded but unable to change group ownership of device file!"
+  print_err ""
+  exit 230
+fi
+print_msg "done."
+
+print_nnl "Setting file permissions of device file to \"${DRIVER_PERMS}\" ... "
+${CHMOD} ${DRIVER_PERMS} /dev/${SOCWATCH_CHAR_DEV_NAME}
+CHMOD_RESULT=$?
+if [ ${CHMOD_RESULT} -ne 0 ] ; then
+  print_err ""
+  print_err "Error: Driver loaded but unable to change permissions to ${DRIVER_PERMS} on device file!"
+  print_err ""
+  exit 229
+fi
+print_msg "done."
+
+# show that the driver was successfully loaded
+print_msg ""
+print_msg "The ${SOCWATCH_DRIVER_NAME} driver has been successfully loaded."
+
+# display driver access group related information for the user
+print_msg ""
+print_msg "NOTE:"
+print_msg ""
+
+print_nnl "The driver is accessible "
+if [ -n "${DRIVER_GROUP}" ] ; then
+  print_msg "only to users under the group ${DRIVER_GROUP}."
+  print_msg "Please add the users to the group '${DRIVER_GROUP}' to use the tool."
+fi
+
+print_msg ""
+print_msg "To change driver access group, reinstall the driver using -g <desired_group> option."
+print_msg ""
+
+
+exit 0

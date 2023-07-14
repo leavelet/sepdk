@@ -1,0 +1,47 @@
+/*
+    Copyright (C) 2010-2023 Intel Corporation.  All Rights Reserved.
+
+    This file is part of SEP Development Kit.
+
+    SEP Development Kit is free software; you can redistribute it
+    and/or modify it under the terms of the GNU General Public License
+    version 2 as published by the Free Software Foundation.
+
+    SEP Development Kit is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with SEP Development Kit; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+    As a special exception, you may use this file as part of a free software
+    library without restriction.  Specifically, if other files instantiate
+    templates or use macros or inline functions from this file, or you compile
+    this file and link it with other files to produce an executable, this
+    file does not by itself cause the resulting executable to be covered by
+    the GNU General Public License.  This exception does not however
+    invalidate any other reasons why the executable file might be covered by
+    the GNU General Public License.
+*/
+
+#ifndef _VTSS_TASK_MAP_H_
+#define _VTSS_TASK_MAP_H_
+
+#include "config.h"
+#include "task.h"
+
+int vtss_task_map_init(void);
+void vtss_task_map_cleanup(void);
+
+bool vtss_task_map_add(struct vtss_task *tsk);
+bool vtss_task_map_remove(struct vtss_task *tsk);
+
+struct vtss_task *vtss_task_map_get(pid_t tid);
+bool vtss_task_map_put(struct vtss_task *tsk);
+
+typedef void (vtss_task_map_cb_t)(struct vtss_task *tsk, void *arg);
+int vtss_task_map_for_each(vtss_task_map_cb_t *cb, void *arg);
+
+#endif

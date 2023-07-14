@@ -1,0 +1,144 @@
+#!/bin/sh
+
+# File: insmod-socwatch
+# Description: script to unload SoCWatch driver
+# Version: 1.0
+#
+# **********************************************************************************
+#  This file is provided under a dual BSD/GPLv2 license.  When using or
+#  redistributing this file, you may do so under either license.
+
+#  GPL LICENSE SUMMARY
+
+#  Copyright(c) 2020 Intel Corporation.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of version 2 of the GNU General Public License as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful, but
+#  WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#  General Public License for more details.
+
+#  Contact Information:
+#  SoC Watch Developer Team <socwatchdevelopers@intel.com>
+#  Intel Corporation,
+#  1300 S Mopac Expwy,
+#  Austin, TX 78746
+
+#  BSD LICENSE
+
+#  Copyright(c) 2020 Intel Corporation.
+
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions
+#  are met:
+
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in
+#      the documentation and/or other materials provided with the
+#      distribution.
+#    * Neither the name of Intel Corporation nor the names of its
+#      contributors may be used to endorse or promote products derived
+#      from this software without specific prior written permission.
+
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+#  OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+#  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+#  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+#  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+#  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+#  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# **********************************************************************************
+
+
+# ------------------------------ CONSTANTS -----------------------------------
+# This is the tag that we grep for when doing lsmod
+SOCWATCH_DRIVER_NAME=socwatch
+
+# ------------------------------- OUTPUT -------------------------------------
+
+print_msg()
+{
+  MSG="$*"
+  echo "$MSG"
+}
+
+print_nnl()
+{
+  MSG="$*"
+  echo -n "$MSG"
+}
+
+print_err()
+{
+  MSG="$*"
+  if [ -w /dev/stderr ] ; then
+    echo "$MSG" >> /dev/stderr
+  else
+    echo "$MSG"
+  fi
+}
+
+# set the path to include "standard" locations so commands below can be found
+PATH="/sbin:/usr/sbin:/bin:/usr/bin/:/usr/local/sbin:/usr/local/bin:/usr/local/gnu/bin:"${PATH}":."
+export PATH
+
+# ------------------------------ COMMANDS ------------------------------------
+
+CUT="cut"
+GREP="grep"
+LSMOD="lsmod"
+RMMOD="rmmod"
+SU="su"
+
+# ------------------------------ VARIABLES -----------------------------------
+
+SCRIPT=$0
+
+# --------------------------------- MAIN -------------------------------------
+
+# check if a driver is currently loaded ...
+DRIVER_LOADED=`${LSMOD} | ${GREP} ${SOCWATCH_DRIVER_NAME} | ${CUT} -d ' ' -f 1`
+if [ -z "${DRIVER_LOADED}" ] ; then
+  print_msg "Warning:  no ${SOCWATCH_DRIVER_NAME} driver was found loaded in the kernel."
+  exit 0
+fi
+
+# check if USER is root
+if [ "${USER}x" != "rootx" ] ; then
+  if [ ! -w /dev ] ; then
+    print_msg "NOTE: super-user or \"root\" privileges are required in order to continue."
+    exec ${SU} -c "/bin/sh ${SCRIPT} $*"
+    print_msg ""
+    exit 0
+  fi
+fi
+
+# remove any currently loaded driver (should be only one)
+if [ -n "${DRIVER_LOADED}" ] ; then
+  print_nnl "Removing ${DRIVER_LOADED} driver from the kernel ... "
+  ${RMMOD} ${DRIVER_LOADED}
+  RMMOD_RESULT=$?
+
+  sleep 1
+
+  if [ ${RMMOD_RESULT} -ne 0 ] ; then
+    print_err ""
+    print_err "Error: Unable to remove ${DRIVER_LOADED} driver from the kernel ... exiting."
+    print_err ""
+    exit 246
+  fi
+  print_msg "done."
+fi
+
+# show which driver was unloaded
+print_msg "The ${DRIVER_LOADED} driver has been successfully unloaded."
+exit 0
